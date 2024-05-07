@@ -8,11 +8,12 @@
    is missing a target that defines the target session-id. Just use the same instance as the event queue for every
    chart."
   (:require
-    [clojure.core.async :as async]
-    [com.fulcrologic.statecharts :as sc]
-    [com.fulcrologic.statecharts.protocols :as sp]
-    [taoensso.encore :as enc]
-    [taoensso.timbre :as log]))
+   [clojure.core.async :as async]
+   [com.fulcrologic.statecharts :as sc]
+   [com.fulcrologic.statecharts.protocols :as sp]
+   [taoensso.encore :as enc]
+   [taoensso.timbre :as log]
+   [com.fulcrologic.statecharts.environment :as e]))
 
 (defn run-event-loop!
   "Initializes a new session using `sp/start!` on the processor and assigns it `session-id`.
@@ -32,19 +33,33 @@
   (let [running? (atom true)]
     (async/go-loop []
       (async/<! (async/timeout resolution-ms))
-      (enc/catching
-        (sp/receive-events! event-queue env
-          (fn [env {:keys [target] :as event}]
-            (log/trace "Received event" event)
-            (if-not target
-              (log/warn "Event did not have a session target. This queue only supports events to charts." event)
-              (let [session-id target
-                    wmem       (sp/get-working-memory working-memory-store env session-id)
-                    next-mem   (when wmem (sp/process-event! processor env wmem event))]
-                (if next-mem
-                  (sp/save-working-memory! working-memory-store env session-id next-mem)
-                  (log/error "Session had no working memory. Event to session ignored" session-id)))))
-          {}))
+      #?(:clj (enc/catching (sp/receive-events! event-queue env
+                                                (fn [env {:keys [target]
+                                                          :as   event}]
+                                                  (log/trace "Received event" event)
+                                                  (if-not target
+                                                    (log/warn "Event did not have a session target. This queue only supports events to charts." event)
+                                                    (let [session-id target
+                                                          wmem       (sp/get-working-memory working-memory-store env session-id)
+                                                          next-mem   (when wmem (sp/process-event! processor env wmem event))]
+                                                      (if next-mem
+                                                        (sp/save-working-memory! working-memory-store env session-id next-mem)
+                                                        (log/error "Session had no working memory. Event to session ignored" session-id)))))
+                                                {}))
+         :bb (try (sp/receive-events! event-queue env
+                                      (fn [env {:keys [target]
+                                                :as   event}]
+                                        (log/trace "Received event" event)
+                                        (if-not target
+                                          (log/warn "Event did not have a session target. This queue only supports events to charts." event)
+                                          (let [session-id target
+                                                wmem       (sp/get-working-memory working-memory-store env session-id)
+                                                next-mem   (when wmem (sp/process-event! processor env wmem event))]
+                                            (if next-mem
+                                              (sp/save-working-memory! working-memory-store env session-id next-mem)
+                                              (log/error "Session had no working memory. Event to session ignored" session-id))))))
+                  (catch Exception e
+                    (log/warn "Exception caught: " e))))
       (if @running?
         (recur)
         (log/debug "Event loop ended")))
