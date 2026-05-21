@@ -1,0 +1,7 @@
+;; bb classpath for running the full test suite under babashka.
+;;
+;;   bb --config bb-tests.edn -f run-tests.clj
+;;
+{:paths ["../src/main" "../src/test"]
+ :deps  {com.fulcrologic/statecharts {:local/root ".."}
+         fulcrologic/fulcro-spec     {:mvn/version "3.2.10"}}}

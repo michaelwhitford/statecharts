@@ -6,13 +6,14 @@
    expression returns a promise, the algorithm parks until it resolves.
 
    `start!` and `process-event!` may return a promise that resolves to working memory.
-   Callers must handle both plain values and promises (use `promesa.core/promise?` to detect,
-   or `promesa.core/let` which handles both transparently)."
+   Callers must handle both plain values and promises (use
+   `com.fulcrologic.statecharts.promise/promise?` to detect, or
+   `com.fulcrologic.statecharts.promise/let` which handles both transparently)."
   (:require
     [com.fulcrologic.statecharts :as sc]
     [com.fulcrologic.statecharts.algorithms.v20150901-async-impl :as impl]
     [com.fulcrologic.statecharts.protocols :as sp]
-    [promesa.core :as p]))
+    [com.fulcrologic.statecharts.promise :as p]))
 
 (deftype AsyncProcessor []
   sp/Processor

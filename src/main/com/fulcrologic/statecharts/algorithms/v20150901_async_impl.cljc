@@ -33,7 +33,7 @@
     [com.fulcrologic.statecharts.malli-specs]
     [com.fulcrologic.statecharts.chart :as chart]
     [com.fulcrologic.statecharts.util :refer [genid new-uuid]]
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
 ;; =============================================================================

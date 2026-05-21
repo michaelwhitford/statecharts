@@ -8,7 +8,7 @@
     [com.fulcrologic.statecharts :as sc]
     [com.fulcrologic.statecharts.protocols :as sp]
     [com.fulcrologic.statecharts.event-queue.async-event-processing :as aep]
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
 

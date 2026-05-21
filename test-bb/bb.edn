@@ -1,0 +1,12 @@
+;; Simulates a downstream babashka consumer of com.fulcrologic/statecharts.
+;;
+;; Crucially, funcool/promesa is NOT on the classpath here — SCI cannot
+;; load promesa, so any path that needs promesa would break. The point of
+;; this smoke test is to prove statecharts' async surface no longer
+;; requires promesa.
+;;
+;; Run from this directory:
+;;
+;;   bb smoke.clj
+;;
+{:deps {com.fulcrologic/statecharts {:local/root ".."}}}

@@ -1,0 +1,110 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  clj:
+    name: CLJ (kaocha + guardrails)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+
+      - name: Cache Maven repo
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: clj-${{ hashFiles('deps.edn') }}
+          restore-keys: clj-
+
+      - name: Run kaocha
+        run: clojure -J-Dguardrails.enabled=true -J-Dguardrails.config=guardrails-test.edn -M:dev:test:clj-tests
+
+  cljs:
+    name: CLJS (shadow-cljs + karma)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Cache Maven repo
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: cljs-${{ hashFiles('deps.edn') }}-${{ hashFiles('package.json') }}
+          restore-keys: cljs-
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-${{ hashFiles('package.json', 'yarn.lock') }}
+          restore-keys: node-
+
+      - name: Install JS deps
+        run: yarn install --frozen-lockfile
+
+      - name: Compile ci-tests
+        run: npx shadow-cljs -A:dev -v compile ci-tests
+
+      - name: Run karma
+        run: npx karma start --single-run
+
+  bb:
+    name: babashka (smoke + bb test suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Clojure CLI + babashka
+        uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+          bb: latest
+
+      - name: Cache Maven repo
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: bb-${{ hashFiles('test-bb/bb-tests.edn', 'deps.edn') }}
+          restore-keys: bb-
+
+      - name: Run bb smoke + test suite
+        run: |
+          cd test-bb
+          bb smoke.clj
+          bb --config bb-tests.edn -f run-tests.clj

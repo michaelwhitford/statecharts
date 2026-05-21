@@ -13,7 +13,7 @@
     [com.fulcrologic.statecharts.protocols :as sp]
     [com.fulcrologic.statecharts.simple-async :as simple-async]
     [com.fulcrologic.statecharts.testing :as testing]
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
 (defn- resolve-maybe-promise
@@ -21,7 +21,7 @@
    has already resolved (for use in sync test contexts with sync expressions)."
   [v]
   (if (p/promise? v)
-    #?(:clj  @v
+    #?(:clj  (p/await! v)
        :cljs v)
     v))
 

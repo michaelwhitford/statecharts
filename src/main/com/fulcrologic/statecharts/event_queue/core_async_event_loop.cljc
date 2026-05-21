@@ -12,7 +12,7 @@
     [com.fulcrologic.statecharts :as sc]
     [com.fulcrologic.statecharts.protocols :as sp]
     [taoensso.encore :as enc]
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
 (defn run-event-loop!

@@ -2,7 +2,7 @@
   (:require
     [com.fulcrologic.statecharts :as sc]
     [com.fulcrologic.statecharts.protocols :as sp]
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
 (defn- save-after-processing!

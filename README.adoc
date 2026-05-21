@@ -32,7 +32,7 @@ An implementation of state charts that use the SCXML
 structure and semantics (as far as they are defined), without the need for XML.
 
 image:https://img.shields.io/clojars/v/com.fulcrologic/statecharts.svg[link=https://clojars.org/com.fulcrologic/statecharts]
-image:https://circleci.com/gh/fulcrologic/statecharts/tree/main.svg?style=svg["CircleCI", link="https://circleci.com/gh/fulcrologic/statecharts/tree/main"]
+image:https://github.com/fulcrologic/statecharts/actions/workflows/tests.yml/badge.svg?branch=main["Tests", link="https://github.com/fulcrologic/statecharts/actions/workflows/tests.yml"]
 
 
 = Usage

@@ -16,7 +16,7 @@
     [com.fulcrologic.statecharts.util :refer [new-uuid]]
     [com.fulcrologic.statecharts.invocation.statechart :as i.statechart]
     #?(:clj [com.fulcrologic.statecharts.invocation.future :as i.future])
-    [promesa.core :as p]
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
 (defn simple-env
