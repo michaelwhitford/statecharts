@@ -559,7 +559,8 @@ table.CodeRay td.code{padding:0 0 0 .75em}
 <li><a href="#_event_name_matching">4.6.1. Event Name Matching</a></li>
 <li><a href="#_send_targets">4.6.2. Send Targets</a></li>
 <li><a href="#_send_types">4.6.3. Send Types</a></li>
-<li><a href="#_manual_polling_queue">4.6.4. Manual Polling Queue</a></li>
+<li><a href="#_error_handling_in_executable_content_w3c_4_4_strict_mode">4.6.4. Error Handling in Executable Content (W3C §4.4 Strict Mode)</a></li>
+<li><a href="#_manual_polling_queue">4.6.5. Manual Polling Queue</a></li>
 </ul>
 </li>
 <li><a href="#_data_models">4.7. Data Models</a></li>
@@ -571,6 +572,7 @@ table.CodeRay td.code{padding:0 0 0 .75em}
 <li><a href="#_passing_invocation_data">4.11.1. Passing Invocation Data</a></li>
 <li><a href="#_invoking_other_state_charts_or_futures">4.11.2. Invoking other State Charts or Futures</a></li>
 <li><a href="#_custom_invocation_processors">4.11.3. Custom Invocation Processors</a></li>
+<li><a href="#_multiplex_dynamic_fan_out">4.11.4. Multiplex (Dynamic Fan-Out)</a></li>
 </ul>
 </li>
 </ul>
@@ -1389,9 +1391,8 @@ form the "then" branch:</p>
 </div>
 </div>
 <div class="paragraph">
-<p>Each branch can contain any executable content (including nested <code>If</code> statements). This is
-particularly useful for leveraging nested <code>raise</code>, allowing you to conditionally queue events
-on the internal queue without having the write a script or use the external queue.</p>
+<p>Each branch can contain any executable content (including nested <code>If</code> statements).
+This is particularly useful for leveraging nested <code>raise</code>, allowing you to conditionally queue events on the internal queue without having the write a script or use the external queue.</p>
 </div>
 </div>
 <div class="sect3">
@@ -1505,8 +1506,51 @@ Transitions are enabled and matched "in order", so you can model narrowed and ca
 <p>The SCXML standard (section 6.2.4) allows the format of the target to change based on the type, and implies that these are often URLs.
 The default implementation of the event queue in this library only supports targeting other state charts (see Send Types below), and when using the default send type, the target is expected to simply be a <code>session-id</code>, where <code>session-id</code>  is a unique identifier, such as a GUUID.</p>
 </div>
+<div class="sect4">
+<h5 id="_special_target_keywords"><a class="anchor" href="#_special_target_keywords"></a><a class="link" href="#_special_target_keywords">Special target keywords</a></h5>
+<div class="paragraph">
+<p>The W3C SCXML spec (§C.1.1) defines a few special string targets such as <code><mark><em>internal</code>, <code>#_parent</code>, and <code></mark></em>&lt;invokeid&gt;</code>.
+This library accepts those strings for compatibility with mechanical XML→Clojure ports, but the <strong>canonical</strong> (and recommended) form uses Clojure keywords:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Target</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:_internal</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Place the event on this session&#8217;s internal queue (drained in the same macrostep). Equivalent to <code>&lt;raise&gt;</code> semantics, but lets you carry data the same way <code>&lt;send&gt;</code> does.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:_parent</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Send to the parent session (the session that <code>&lt;invoke&gt;</code>-d this chart). Resolves to <code>(env/parent-session-id env)</code> and propagates <code>:invoke-id</code> for parent-side correlation.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">any other keyword (e.g. <code>:my-session</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Treated as a literal session-id. This covers both the W3C <code>#<em>scxml</em>&lt;sessionid&gt;</code> form and the <code>#_&lt;invokeid&gt;</code> form, since this library uses the invocation id as the child&#8217;s session id.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Examples:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(Send {<span class="symbol">:event</span> <span class="symbol">:keep-alive</span> <span class="symbol">:target</span> <span class="symbol">:_internal</span>})           <span class="comment">;; raise on this session's internal queue</span>
+(Send {<span class="symbol">:event</span> <span class="symbol">:report</span> <span class="symbol">:target</span> <span class="symbol">:_parent</span> <span class="symbol">:data</span> {<span class="keyword">..</span><span class="keyword">.</span>}})     <span class="comment">;; reply to invoking parent</span>
+(Send {<span class="symbol">:event</span> <span class="symbol">:ping</span> <span class="symbol">:target</span> <span class="symbol">:other-session</span>})             <span class="comment">;; send to a known sibling session</span></code></pre>
+</div>
+</div>
 <div class="paragraph">
 <p>Other implementations of the EventQueue protocol may choose to define further refinements.</p>
+</div>
 </div>
 </div>
 <div class="sect3">
@@ -1518,7 +1562,63 @@ as a desire to talk to another state chart session (and is the only/default pred
 </div>
 </div>
 <div class="sect3">
-<h4 id="_manual_polling_queue"><a class="anchor" href="#_manual_polling_queue"></a><a class="link" href="#_manual_polling_queue">4.6.4. Manual Polling Queue</a></h4>
+<h4 id="_error_handling_in_executable_content_w3c_4_4_strict_mode"><a class="anchor" href="#_error_handling_in_executable_content_w3c_4_4_strict_mode"></a><a class="link" href="#_error_handling_in_executable_content_w3c_4_4_strict_mode">4.6.4. Error Handling in Executable Content (W3C §4.4 Strict Mode)</a></h4>
+<div class="paragraph">
+<p>When executable content (<code>&lt;script&gt;</code>, <code>&lt;assign&gt;</code>, <code>&lt;send&gt;</code>, <code>&lt;foreach&gt;</code>, &#8230;&#8203;) raises an error, the W3C SCXML specification mandates two things:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>An <code>error.execution</code> event MUST be placed on the <strong>internal</strong> event queue, so the chart can react via a <code>(transition {:event :error.execution &#8230;&#8203;})</code> handler.</p>
+</li>
+<li>
+<p>The remainder of the <strong>current block</strong> of executable content MUST be skipped (the offending element&#8217;s siblings do not run).</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>By default, this library implements (1) but <strong>not</strong> (2): an error queues <code>error.execution</code>, but subsequent siblings still run.
+This is a deliberate, backwards-compatible default for charts written before strict semantics were available.</p>
+</div>
+<div class="paragraph">
+<p>To opt into the fully W3C-conformant behavior, use <code>simple/strict-env</code> instead of <code>simple/simple-env</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(<span class="keyword">require</span> '[com.fulcrologic.statecharts.simple <span class="symbol">:as</span> simple])
+
+(<span class="keyword">def</span> <span class="function">env</span> (simple/strict-env))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Or, if you assemble your own <code>env</code> from custom protocol implementations (a common pattern), set the flag directly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(<span class="keyword">def</span> <span class="function">env</span>
+  (<span class="keyword">-&gt;</span> (build-my-env)            <span class="comment">;; your registry, data model, etc.</span>
+      (<span class="keyword">assoc</span> <span class="symbol">:com.fulcrologic.statecharts/errors-abort-siblings?</span> <span class="predefined-constant">true</span>)))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Either way, all of the following will then abort the surrounding block on first error and route the queued <code>error.execution</code> event to a transition handler:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(state {<span class="symbol">:id</span> <span class="symbol">:doing-work</span>}
+  (on-entry {}
+    (script {<span class="symbol">:expr</span> (<span class="keyword">fn</span> [_ _] (do-something-risky))}) <span class="comment">;; if this throws...</span>
+    (assign {<span class="symbol">:location</span> [<span class="symbol">:result</span>] <span class="symbol">:expr</span> <span class="integer">42</span>}))         <span class="comment">;; ...this is skipped (strict mode)</span>
+  (transition {<span class="symbol">:event</span> <span class="symbol">:error.execution</span> <span class="symbol">:target</span> <span class="symbol">:recovery</span>}))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>In non-strict mode the same chart still queues the <code>error.execution</code> event and routes to <code>:recovery</code>, but the <code>assign</code> would also have run before the transition fires.
+Most charts will not see a behavior difference; charts that <strong>did</strong> rely on later siblings running after a thrown earlier sibling should either fix the underlying error or stay on the default env.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_manual_polling_queue"><a class="anchor" href="#_manual_polling_queue"></a><a class="link" href="#_manual_polling_queue">4.6.5. Manual Polling Queue</a></h4>
 <div class="paragraph">
 <p>There is a manually polled queue implementation in this library, with <strong>no</strong> automatic processing at all.
 If you want to support events that come from outside of the chart via the queue, then you have to create a loop that polls the queue and calls <code>process-event!</code>.
@@ -1983,6 +2083,425 @@ You could do something like:</p>
 So, the timer service here is sending <code>:interval-timer/timeout</code> events.</p>
 </div>
 </div>
+<div class="sect3">
+<h4 id="_multiplex_dynamic_fan_out"><a class="anchor" href="#_multiplex_dynamic_fan_out"></a><a class="link" href="#_multiplex_dynamic_fan_out">4.11.4. Multiplex (Dynamic Fan-Out)</a></h4>
+<div class="paragraph">
+<p>SCXML <code>&lt;invoke&gt;</code> declarations are static: one declaration starts exactly one child.
+Many real-world patterns — N voting agents, M-of-N retry, runtime-sized worker pools, heterogeneous panels of mixed children — need <strong>dynamic</strong> multiplicity that you can&#8217;t know at chart-authoring time.</p>
+</div>
+<div class="paragraph">
+<p>The library ships with a general-purpose <code>InvocationProcessor</code> that fans out a single <code>&lt;invoke&gt;</code> declaration into N invocations of any other registered invocation type, with count, child type, and per-child params all computed at runtime against the parent&#8217;s data model.
+It preserves every standard SCXML guarantee: algorithm-managed lifecycle, a single <code>done.invoke.&lt;mux-id&gt;</code> to the grandparent when the cohort finishes, and clean parent↔child event routing.</p>
+</div>
+<div class="sect4">
+<h5 id="_installation"><a class="anchor" href="#_installation"></a><a class="link" href="#_installation">Installation</a></h5>
+<div class="paragraph">
+<p><code>with-multiplex</code> is an idempotent installer — safe to call any number of times.
+It also installs the <strong>statechart</strong> invocation processor if it isn&#8217;t already present, because multiplex&#8217;s internal aggregator chart needs it.
+Users who only intend to multiplex non-statechart children (HTTP, futures, custom processors) do not need to install anything separately.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(<span class="keyword">require</span> '[com.fulcrologic.statecharts.invocation.multiplex <span class="symbol">:as</span> mux]
+         '[com.fulcrologic.statecharts.invocation.multiplex-options <span class="symbol">:as</span> mo]
+         '[com.fulcrologic.statecharts.invocation.multiplex-processor <span class="symbol">:as</span> mp])
+
+(<span class="keyword">def</span> <span class="function">env</span> (<span class="keyword">-&gt;</span> (simple/simple-env) mp/with-multiplex))</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_the_multiplex_element"><a class="anchor" href="#_the_multiplex_element"></a><a class="link" href="#_the_multiplex_element">The <code>multiplex</code> Element</a></h5>
+<div class="paragraph">
+<p><code>(mux/multiplex {&#8230;&#8203;})</code> emits an ordinary <code>invoke</code> element whose type is the multiplex type.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(<span class="keyword">require</span> '[com.fulcrologic.statecharts <span class="symbol">:as</span> sc]
+         '[com.fulcrologic.statecharts.chart <span class="symbol">:refer</span> [statechart]]
+         '[com.fulcrologic.statecharts.elements <span class="symbol">:refer</span> [state on-entry transition final]])
+
+<span class="comment">;; A small &quot;judge&quot; chart, registered under ::judge.</span>
+(<span class="keyword">def</span> <span class="function">judge-chart</span>
+  (statechart {}
+    (state {<span class="symbol">:id</span> <span class="symbol">:evaluate</span>}
+      (on-entry {}
+        (script {<span class="symbol">:expr</span> (<span class="keyword">fn</span> [env data]
+                         (mux/reply env <span class="symbol">:score-ready</span> {<span class="symbol">:score</span> (<span class="keyword">rand</span>)}))}))
+      (transition {<span class="symbol">:event</span> <span class="symbol">:score-ready</span> <span class="symbol">:target</span> <span class="symbol">:done</span>}))
+    (final {<span class="symbol">:id</span> <span class="symbol">:done</span>})))
+
+<span class="comment">;; Parent chart with three judges fanned out by one declaration.</span>
+(<span class="keyword">def</span> <span class="function">panel</span>
+  (statechart {<span class="symbol">:initial</span> <span class="symbol">:judging</span>}
+    (state {<span class="symbol">:id</span> <span class="symbol">:judging</span>}
+      (mux/multiplex
+        {<span class="symbol">:id</span>              <span class="symbol">:judges</span>
+         mo/child-type    <span class="symbol">::sc/chart</span>
+         mo/count         <span class="integer">3</span>
+         mo/child-params  (<span class="keyword">fn</span> [_env _data idx]
+                            {<span class="symbol">:src</span>    <span class="symbol">::judge</span>
+                             <span class="symbol">:params</span> {<span class="symbol">:judge/idx</span> idx}})})
+      (transition {<span class="symbol">:event</span> <span class="symbol">:done.invoke.judges</span> <span class="symbol">:target</span> <span class="symbol">:result</span>}))
+    (state {<span class="symbol">:id</span> <span class="symbol">:result</span>} <span class="keyword">..</span><span class="keyword">.</span>)))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Required keys on the options map:</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1"><code>:id</code></dt>
+<dd>
+<p>The invokeid for this multiplex. May not have <code>multiplex</code> as either its name or its namespace — <code>:multiplex</code>, <code>:multiplex/foo</code>, and <code>:foo/multiplex</code> are all rejected at construction time (reserved as the child-sid prefix).</p>
+</dd>
+<dt class="hdlist1"><code>mo/child-type</code></dt>
+<dd>
+<p>The underlying invocation type used for every child (e.g. <code>::sc/chart</code>).</p>
+</dd>
+<dt class="hdlist1"><code>mo/count</code></dt>
+<dd>
+<p>Number of children to spawn.</p>
+</dd>
+</dl>
+</div>
+<div class="paragraph">
+<p>Optional:</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1"><code>mo/child-params</code></dt>
+<dd>
+<p><code>(fn [env data idx])</code> returning the full start-invocation arg shape the underlying processor expects (for statechart children this is <code>{:src ::chart-key :params {&#8230;&#8203;}}</code>). Defaults to a fn returning <code>{}</code>.</p>
+</dd>
+<dt class="hdlist1"><code>:autoforward</code></dt>
+<dd>
+<p>Pass-through to the underlying <code>invoke</code>. <strong>Defaults to <code>true</code></strong> — the multiplex&#8217;s parent → cohort routing relies on the autoforward path, so you normally do not set this. Pass <code>:autoforward false</code> only if you want to disable forwarding entirely and manage cohort routing yourself (rare; <code>mux/send</code> will not work for that multiplex).</p>
+</dd>
+</dl>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_runtime_dynamism"><a class="anchor" href="#_runtime_dynamism"></a><a class="link" href="#_runtime_dynamism">Runtime Dynamism</a></h5>
+<div class="paragraph">
+<p><code>mo/count</code> and <code>mo/child-type</code> may be literals OR <code>(fn [env data])</code> (or 4-arity when the execution model has <code>explode-event?</code>).
+They are evaluated <strong>once</strong> at start-invocation time against the parent&#8217;s data model:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(mux/multiplex
+  {<span class="symbol">:id</span>              <span class="symbol">:workers</span>
+   mo/child-type    <span class="symbol">::sc/chart</span>
+   mo/count         (<span class="keyword">fn</span> [_env data] (<span class="keyword">count</span> (<span class="symbol">:queue/jobs</span> data)))   <span class="comment">; dynamic N</span>
+   mo/child-params  (<span class="keyword">fn</span> [_env data idx]
+                      {<span class="symbol">:src</span>    <span class="symbol">::worker</span>
+                       <span class="symbol">:params</span> {<span class="symbol">:job</span> (<span class="keyword">nth</span> (<span class="symbol">:queue/jobs</span> data) idx)}})})</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>mo/child-params</code> is always a function of <code>(env, data, idx)</code> and is called once per child at fan-out time.
+If it needs event context, read <code>:_event</code> from <code>data</code>.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_child_naming_and_event_matching"><a class="anchor" href="#_child_naming_and_event_matching"></a><a class="link" href="#_child_naming_and_event_matching">Child Naming and Event Matching</a></h5>
+<div class="paragraph">
+<p>Each child gets the invokeid <code>:multiplex.&lt;mux-id&gt;.&lt;idx&gt;</code> — e.g. <code>:multiplex.judges.0</code>.
+The <code>multiplex.</code> prefix is critical: it prevents SCXML dot-prefix matching from conflating per-child done events with the cohort&#8217;s own done event.</p>
+</div>
+<div class="paragraph">
+<p>Given a <code>:judges</code> multiplex with three children, you can match three useful granularities:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 50%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6668%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Event fired</th>
+<th class="tableblock halign-left valign-top">Matches <code>done.invoke.judges</code></th>
+<th class="tableblock halign-left valign-top">Matches <code>done.invoke.multiplex.judges</code></th>
+<th class="tableblock halign-left valign-top">Matches <code>done.invoke.multiplex.judges.1</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>done.invoke.judges</code> (cohort summary)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>done.invoke.multiplex.judges.0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>done.invoke.multiplex.judges.1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">yes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>done.invoke.multiplex.judges.2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">yes</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">no</p></td>
+</tr>
+</tbody>
+</table>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(transition {<span class="symbol">:event</span> <span class="symbol">:done.invoke.judges</span>             <span class="symbol">:target</span> <span class="symbol">:all-done</span>})
+(transition {<span class="symbol">:event</span> <span class="symbol">:done.invoke.multiplex.judges</span>   <span class="symbol">:target</span> <span class="symbol">:one-replied</span>})
+(transition {<span class="symbol">:event</span> <span class="symbol">:done.invoke.multiplex.judges.</span><span class="integer">1</span> <span class="symbol">:target</span> <span class="symbol">:judge-1-done</span>})</code></pre>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_cohort_completion"><a class="anchor" href="#_cohort_completion"></a><a class="link" href="#_cohort_completion">Cohort Completion</a></h5>
+<div class="paragraph">
+<p>When the multiplex starts, the processor synthesizes a small internal <strong>aggregator</strong> statechart and starts it at sid = <code>&lt;mux-id&gt;</code>.
+Each child&#8217;s <code>::sc/parent-session-id</code> is set to the multiplex&#8217;s sid, so every <code>done.invoke.&lt;child-sid&gt;</code> routes to the aggregator.
+The aggregator counts these and transitions to its <code>:done</code> final state when all N have completed — at which point the W3C algorithm fires the standard <code>done.invoke.&lt;mux-id&gt;</code> event to the grandparent.</p>
+</div>
+<div class="paragraph">
+<p>The grandparent sees <strong>exactly one</strong> summary event when the whole cohort is finished, just as it would for any ordinary <code>&lt;invoke&gt;</code>.</p>
+</div>
+<div class="paragraph">
+<p>In addition, the aggregator <strong>re-emits each per-child done event</strong> (<code>done.invoke.multiplex.&lt;mux-id&gt;.&lt;K&gt;</code>) to the grandparent. User charts can therefore observe per-child completion to drive UI updates (a progress bar, a "Judge 1 complete!" toast, an early-exit decision) without having to wait for the cohort summary. All three match granularities shown above fire on the grandparent:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 37.5%;">
+<col style="width: 62.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Grandparent transition <code>:event</code></th>
+<th class="tableblock halign-left valign-top">Fires when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:done.invoke.judges</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">The whole cohort is complete. Once.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:done.invoke.multiplex.judges</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ANY single judge completes (prefix-matches all per-child events). N times — once per child.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>:done.invoke.multiplex.judges.1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Judge 1 specifically completes. Once.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect4">
+<h5 id="_child_start_failures"><a class="anchor" href="#_child_start_failures"></a><a class="link" href="#_child_start_failures">Child Start Failures</a></h5>
+<div class="paragraph">
+<p>If an underlying processor refuses to start a child — for example, a statechart child whose <code>:src</code> is not registered — multiplex does two things automatically:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Enqueues a synthetic <code>done.invoke.multiplex.&lt;mux-id&gt;.&lt;K&gt;</code> event to the aggregator&#8217;s session, so the aggregator&#8217;s tally still reaches N. The cohort&#8217;s <code>done.invoke.&lt;mux-id&gt;</code> still fires for the grandparent.</p>
+</li>
+<li>
+<p>Forwards an <code>:error.platform</code> event to the grandparent with <code>{:invokeid &lt;child-sid&gt; :reason &#8230;&#8203;}</code> in its data so user code can react.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>This applies to both sync <code>false</code> returns and async rejected promises. A handful of failed starts will not deadlock the cohort.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_parent_to_cohort_routing"><a class="anchor" href="#_parent_to_cohort_routing"></a><a class="link" href="#_parent_to_cohort_routing">Parent to Cohort Routing</a></h5>
+<div class="paragraph">
+<p>The recommended way for a grandparent to send events to a cohort is <code>mux/send</code>, a convenience element constructor that produces the correct <code>&lt;send&gt;</code> for you:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure"><span class="comment">;; Inside a transition or on-entry in the grandparent chart:</span>
+
+<span class="comment">;; Broadcast to every child (the default):</span>
+(mux/send {<span class="symbol">:target</span> <span class="symbol">:judges</span> <span class="symbol">:event</span> <span class="symbol">:go</span> <span class="symbol">:data</span> {<span class="symbol">:payload</span> <span class="integer">1</span>}})
+
+<span class="comment">;; Address a specific child by index:</span>
+(mux/send {<span class="symbol">:target</span> <span class="symbol">:judges</span> <span class="symbol">:idx</span> <span class="integer">1</span> <span class="symbol">:event</span> <span class="symbol">:evaluate</span> <span class="symbol">:data</span> {<span class="symbol">:item</span> the-item}})
+
+<span class="comment">;; Deliver to one arbitrary child:</span>
+(mux/send {<span class="symbol">:target</span> <span class="symbol">:judges</span> <span class="symbol">:idx</span> <span class="symbol">:any</span> <span class="symbol">:event</span> <span class="symbol">:go</span>})</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Option keys:</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1"><code>:target</code></dt>
+<dd>
+<p>(Required.) The multiplex&#8217;s <code>:id</code> (keyword).</p>
+</dd>
+<dt class="hdlist1"><code>:event</code></dt>
+<dd>
+<p>(Required.) Event-name keyword to deliver.</p>
+</dd>
+<dt class="hdlist1"><code>:idx</code></dt>
+<dd>
+<p>(Optional.) Integer K, <code>:any</code>, or <code>:all</code>. Defaults to <code>:all</code> (broadcast).</p>
+</dd>
+<dt class="hdlist1"><code>:data</code></dt>
+<dd>
+<p>(Optional.) User data merged into the outgoing event&#8217;s <code>:data</code>.</p>
+</dd>
+</dl>
+</div>
+<div class="paragraph">
+<p><code>mux/send</code> works because <code>:autoforward</code> is on by default. If you explicitly set <code>:autoforward false</code> on the multiplex, <code>mux/send</code> will not route events to that multiplex&#8217;s children — you would have to write your own send and your own forwarding.</p>
+</div>
+<div class="paragraph">
+<p>Under the hood, <code>mux/send</code> addresses the grandparent&#8217;s own session and embeds <code>mo/to</code> (the route) and <code>mo/target-mux</code> (the multiplex <code>:id</code> discriminator) into event data. The algorithm&#8217;s autoforward path then delivers the event to all multiplex invocations active in the parent state; each multiplex&#8217;s <code>forward-event!</code> checks <code>mo/target-mux</code> and either claims the event or no-ops. The processor strips both <code>mo/to</code> and <code>mo/target-mux</code> from event data and adds <code>mo/from</code> before delivering to the chosen child(ren).</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<div class="title">Note</div>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Writing a raw <code>(send {:target :#_&lt;mux-id&gt; &#8230;&#8203;})</code> does <strong>not</strong> route through the multiplex: that addresses the multiplex&#8217;s <strong>aggregator session</strong>, which only handles per-child done events. Use <code>mux/send</code> for targeted parent → cohort routing.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect5">
+<h6 id="_multiple_multiplexes_in_one_state"><a class="anchor" href="#_multiple_multiplexes_in_one_state"></a><a class="link" href="#_multiple_multiplexes_in_one_state">Multiple Multiplexes in One State</a></h6>
+<div class="paragraph">
+<p>Multiple <code>mux/multiplex</code> elements can live in the same parent state. Because <code>mux/send</code> automatically embeds the target&#8217;s <code>:id</code> in event data as <code>mo/target-mux</code>, the autoforward path delivers each event to every sibling multiplex but only the <strong>targeted</strong> multiplex acts on it; the others no-op cleanly. This lets you compose, say, a <code>:judges</code> cohort and a <code>:scribes</code> cohort side by side and address each independently.</p>
+</div>
+<div class="paragraph">
+<p>If you author a raw <code>&lt;send&gt;</code> (not via <code>mux/send</code>) that triggers autoforward, the event will be processed by <strong>every</strong> active multiplex in the state — that is the standard SCXML autoforward semantic, and the legacy broadcast behavior is preserved for raw callers that omit <code>mo/target-mux</code>. Prefer <code>mux/send</code> for targeted routing.</p>
+</div>
+<div class="paragraph">
+<p><code>mo/from</code> annotates events crossing the multiplex boundary, and its shape depends on direction:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Parent to child</strong> (added automatically by the multiplex&#8217;s <code>forward-event!</code>): <code>{:sid &lt;grandparent-sid&gt;}</code>.</p>
+</li>
+<li>
+<p><strong>Child to parent</strong> (added by <code>mux/reply</code>): <code>{:sid &lt;child-sid&gt; :idx &lt;K&gt; :invokeid &lt;mux-id&gt; :grandparent &lt;grandparent-sid&gt;}</code>.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The asymmetry is intentional: the parent is not a member of the cohort, so it has no <code>:idx</code> or <code>:invokeid</code>.
+Receivers can address a follow-up at a specific child via <code>(mux/send {:target &lt;mux-id&gt; :idx K :event :follow-up})</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_cohort_to_outside_routing"><a class="anchor" href="#_cohort_to_outside_routing"></a><a class="link" href="#_cohort_to_outside_routing">Cohort to Outside Routing</a></h5>
+<div class="paragraph">
+<p>Children call <code>mux/reply</code> to send an event to the grandparent (the session that declared the multiplex).
+It reads <code>mo/identity</code> from the child&#8217;s data model and merges it into outgoing event data under <code>mo/from</code>, so the receiver can address a follow-up back at this specific child:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(script {<span class="symbol">:expr</span> (<span class="keyword">fn</span> [env data]
+                 (mux/reply env <span class="symbol">:score-ready</span> {<span class="symbol">:score</span> <span class="float">0.83</span>}))})</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The grandparent receives <code>{:score 0.83, mo/from {:sid :multiplex.judges.2 :idx 2 :invokeid :judges :grandparent &lt;gp-sid&gt;}}</code> and can target a follow-up via <code>(mux/send {:target :judges :idx 2 :event :next &#8230;&#8203;})</code>.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_moidentity"><a class="anchor" href="#_moidentity"></a><a class="link" href="#_moidentity"><code>mo/identity</code></a></h5>
+<div class="paragraph">
+<p>The multiplex automatically seeds <code>mo/identity {:sid :idx :invokeid :grandparent}</code> into each child statechart&#8217;s data model at start.
+Authors generally don&#8217;t need to read it directly — <code>mux/reply</code> does that for them.
+For non-statechart child types the value is still injected into the child&#8217;s params; that processor decides how (or whether) to expose it.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_edge_case_mocount_0"><a class="anchor" href="#_edge_case_mocount_0"></a><a class="link" href="#_edge_case_mocount_0">Edge Case: <code>mo/count = 0</code></a></h5>
+<div class="paragraph">
+<p>The aggregator is started with <code>:n 0</code> and an eventless transition fires immediately on entry, sending <code>done.invoke.&lt;mux-id&gt;</code> to the grandparent without spawning any children.
+Behaviour is symmetric with the N&gt;0 case.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_lifecycle"><a class="anchor" href="#_lifecycle"></a><a class="link" href="#_lifecycle">Lifecycle</a></h5>
+<div class="paragraph">
+<p>When the parent state exits, the algorithm calls <code>stop-invocation!</code> on the multiplex.
+The processor stops the aggregator first (so any in-flight tally updates don&#8217;t fire a late cohort done event) and then stops all N children via their underlying processor.</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_async_engines"><a class="anchor" href="#_async_engines"></a><a class="link" href="#_async_engines">Async Engines</a></h5>
+<div class="paragraph">
+<p>The multiplex processor honors the library&#8217;s sync/async contract:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Under <code>simple/simple-env</code>, every <code>sp/start-invocation!</code> returns plain <code>true</code>. Multiplex returns <code>true</code> synchronously — no promise wrapping.</p>
+</li>
+<li>
+<p>Under <code>simple-async/simple-env</code>, child or aggregator starts may return promises. Multiplex&#8217;s own <code>start-invocation!</code> then returns <code>Promise&lt;true&gt;</code> that resolves once all child starts AND the aggregator start have settled. <code>stop-invocation!</code> behaves analogously: it awaits the aggregator and child cleanups before reporting completion.</p>
+</li>
+<li>
+<p>Children are spawned <strong>after</strong> the aggregator&#8217;s start resolves, so the aggregator&#8217;s session is always registered to receive child done events before any child can fire one.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Implementation reference: the same pattern used by <code>invocation/statechart.cljc</code> (the canonical async-aware invocation processor).</p>
+</div>
+</div>
+<div class="sect4">
+<h5 id="_limitations"><a class="anchor" href="#_limitations"></a><a class="link" href="#_limitations">Limitations</a></h5>
+<div class="ulist">
+<ul>
+<li>
+<p><code>:id</code> cannot have <code>multiplex</code> as either its name or its namespace. All of <code>:multiplex</code>, <code>:multiplex/foo</code>, and <code>:foo/multiplex</code> are rejected at construction time, because the multiplex processor uses the <code>multiplex.</code> prefix on child sids and dot-prefix event matching would otherwise produce false collisions.</p>
+</li>
+<li>
+<p>For statechart children, <code>mo/child-params</code> must return start-invocation maps shaped like <code>{:src ::chart-key :params {&#8230;&#8203;}}</code>.</p>
+</li>
+<li>
+<p>Built-in termination policy is "all children done." First-reply, m-of-n, and other policies are not built in — compose them in the grandparent by tallying child done events yourself and emitting your own summary events.</p>
+</li>
+<li>
+<p>Cross-cohort coordination ("fire when either of two sibling multiplexes finishes first") is also a grandparent-side pattern.</p>
+</li>
+<li>
+<p><code>mo/from</code> on outgoing events from non-statechart child processors is a convention, not enforced.</p>
+</li>
+<li>
+<p><code>mux/send</code> requires <code>:autoforward true</code> (the default). If you set <code>:autoforward false</code>, neither <code>mux/send</code> nor any raw <code>&lt;send&gt;</code> to <code>#_&lt;mux-id&gt;</code> will reach the cohort via <code>forward-event!</code> — you must implement your own targeted send mechanism.</p>
+</li>
+<li>
+<p><code>mo/target-mux</code> is library-controlled: <code>mux/send</code> writes it for you. User code should not normally write it directly — use <code>mux/send</code>.</p>
+</li>
+<li>
+<p><strong>Nested multiplex with shared <code>:id</code></strong>: when multiple instances of the same child chart run concurrently (e.g. as siblings under an outer multiplex), each instance tries to claim the same aggregator and child session-ids. Give each inner multiplex a unique <code>:id</code> per outer instance — vary it from inside <code>mo/child-params</code> using <code>idx</code> to disambiguate, or author distinct child charts per outer position. This is the same explicit-id constraint that affects any SCXML <code>&lt;invoke&gt;</code> instantiated multiple times concurrently; it just bites nested fan-out harder.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -2348,8 +2867,8 @@ This means that you&#8217;d normally need to syntax-quote the transaction; howev
 The chart transitions atomically — it never observably rests in a "loading" state.</p>
 </div>
 <div class="paragraph">
-<p>The point is to make async operations "park" (effectively block) the statechart execution until the promise is fulfilled or rejected. This
-allows you to write statecharts that do not need so many intermediate states for tracking if a promise is fulfilled.</p>
+<p>The point is to make async operations "park" (effectively block) the statechart execution until the promise is fulfilled or rejected.
+This allows you to write statecharts that do not need so many intermediate states for tracking if a promise is fulfilled.</p>
 </div>
 <div class="paragraph">
 <p>To enable async operations, pass <code>:async? true</code> when installing statecharts:</p>
@@ -2548,26 +3067,22 @@ The existing <code>fop/load</code> and <code>fop/invoke-remote</code> operations
 <dt class="hdlist1"><code>(scf/local-data-path session-id)</code></dt>
 <dd>
 <p>Get the path of the local data for a given session.
-This
-is useful for adding a lookup ref to a UI component whose rendering depends on changes to this local state.</p>
+This is useful for adding a lookup ref to a UI component whose rendering depends on changes to this local state.</p>
 </dd>
 <dt class="hdlist1"><code>(scf/statechart-session-ident session-id)</code></dt>
 <dd>
 <p>Get the ident of the state chart session itself.
-This
-is useful for adding a lookup ref to a UI component whose rendering depends on changes to the state chart&#8217;s configuration.</p>
+This is useful for adding a lookup ref to a UI component whose rendering depends on changes to the state chart&#8217;s configuration.</p>
 </dd>
 <dt class="hdlist1"><code>(resolve-aliases data)</code></dt>
 <dd>
 <p>Used in executable content to return a map for all aliases.
-It looks up every
-alias from <code>:fulcro/aliases</code> and returns a map with them as keys, and their extracted data as values.</p>
+It looks up every alias from <code>:fulcro/aliases</code> and returns a map with them as keys, and their extracted data as values.</p>
 </dd>
 <dt class="hdlist1"><code>(resolve-actors data :actor/thing :actor/other &#8230;&#8203;)</code></dt>
 <dd>
 <p>Resolves the UI props of multiple named actors.
-The
-return value is a map from actor name to the UI props (tree).</p>
+The return value is a map from actor name to the UI props (tree).</p>
 </dd>
 <dt class="hdlist1"><code>(resolve-actors data :actor/thing)</code></dt>
 <dd>
@@ -2749,10 +3264,9 @@ If the chart reaches a top-level final state, then it will be GC&#8217;d from st
 <div class="title">Note</div>
 </td>
 <td class="content">
-The legacy <code>com.fulcrologic.statecharts.integration.fulcro.ui-routes</code> namespace is
-deprecated. All examples below use the new <code>routing</code> namespace. The old namespace
-remains available for backward compatibility but does not include URL sync, cross-chart
-routing, or configuration validation.
+The legacy <code>com.fulcrologic.statecharts.integration.fulcro.ui-routes</code> namespace is deprecated.
+All examples below use the new <code>routing</code> namespace.
+The old namespace remains available for backward compatibility but does not include URL sync, cross-chart routing, or configuration validation.
 </td>
 </tr>
 </table>
@@ -2801,7 +3315,9 @@ Browser back/forward triggers a statechart event that goes through the same guar
 <div class="title">Important</div>
 </td>
 <td class="content">
-Routing works best with async statechart processing. When calling <code>install-fulcro-statecharts!</code>, pass <code>:async? true</code> so that on-entry handlers (which often trigger data loads) complete before the next event is processed. The demo code in this section assumes async mode.
+Routing works best with async statechart processing.
+When calling <code>install-fulcro-statecharts!</code>, pass <code>:async? true</code> so that on-entry handlers (which often trigger data loads) complete before the next event is processed.
+The demo code in this section assumes async mode.
 </td>
 </tr>
 </table>
@@ -2972,7 +3488,8 @@ It generates transitions for every descendant <code>:route/target</code> and for
 </dd>
 <dt class="hdlist1"><code>:routing/root</code></dt>
 <dd>
-<p>The Fulcro component that serves as the rendering parent for these routes. Must have a constant ident (e.g. <code>[:component/id ::RoutingRoot]</code>) or be the app root (no ident).</p>
+<p>The Fulcro component that serves as the rendering parent for these routes.
+Must have a constant ident (e.g. <code>[:component/id ::RoutingRoot]</code>) or be the app root (no ident).</p>
 </dd>
 </dl>
 </div>
@@ -3021,15 +3538,21 @@ When the statechart enters this state, three things happen automatically:</p>
 <dl>
 <dt class="hdlist1"><code>:route/target</code></dt>
 <dd>
-<p>(Required) A component class or anything accepted by <code>comp/registry-key&#8594;class</code>. The state ID is automatically derived from this&#8201;&#8212;&#8201;do not pass an explicit <code>:id</code>. Prefer using the class directly (via syntax-quote, e.g. <code>`ui/Dashboard</code>) rather than a keyword symbol — using the class forces a <code>require</code> on the target namespace, so the compiler catches missing dependencies at build time. Use a keyword only when necessary to break circular requires.</p>
+<p>(Required) A component class or anything accepted by <code>comp/registry-key&#8594;class</code>.
+The state ID is automatically derived from this&#8201;&#8212;&#8201;do not pass an explicit <code>:id</code>.
+Prefer using the class directly (via syntax-quote, e.g. <code>`ui/Dashboard</code>) rather than a keyword symbol — using the class forces a <code>require</code> on the target namespace, so the compiler catches missing dependencies at build time.
+Use a keyword only when necessary to break circular requires.</p>
 </dd>
 <dt class="hdlist1"><code>:route/segment</code></dt>
 <dd>
-<p>(Optional) Custom URL path segment string. When absent, defaults to the simple name of the target (e.g. <code>ProjectDetail</code>). Used by the default URLCodec, which is customizable.</p>
+<p>(Optional) Custom URL path segment string.
+When absent, defaults to the simple name of the target (e.g. <code>ProjectDetail</code>).
+Used by the default URLCodec, which is customizable.</p>
 </dd>
 <dt class="hdlist1"><code>:route/params</code></dt>
 <dd>
-<p>(Optional) A set of keywords. When present in the routing event data, these keys are extracted and stored at <code>[:routing/parameters &lt;state-id&gt;]</code> in the data model.</p>
+<p>(Optional) A set of keywords.
+When present in the routing event data, these keys are extracted and stored at <code>[:routing/parameters &lt;state-id&gt;]</code> in the data model.</p>
 </dd>
 <dt class="hdlist1"><code>:parallel?</code></dt>
 <dd>
@@ -3092,6 +3615,91 @@ Use <code>:route/segment</code> to override with a human-friendly string.</p>
 </tr>
 </tbody>
 </table>
+</div>
+<div class="sect4">
+<h5 id="_empty_segments_initial_leaf_marker"><a class="anchor" href="#_empty_segments_initial_leaf_marker"></a><a class="link" href="#_empty_segments_initial_leaf_marker">Empty Segments — Initial-Leaf Marker</a></h5>
+<div class="paragraph">
+<p>There is one sanctioned use of <code>:route/segment ""</code>: marking the <strong>initial-chain leaf</strong> of a <code>routes</code> node so that the parent&#8217;s URL alone enters the leaf.
+This is how you make <code>/admin</code> (rather than <code>/admin/dashboard</code>) display the admin dashboard, or how you make <code>/</code> enter a chart&#8217;s default home leaf.</p>
+</div>
+<div class="paragraph">
+<p>The marker is intentionally narrow because "no URL contribution" is otherwise ambiguous: the URL→state mapping needs to round-trip, and a non-leaf or non-initial transparent state would make the URL unable to identify which state to enter.</p>
+</div>
+<div class="paragraph">
+<p><strong>Rules</strong> (enforced at chart registration when <code>:routing/checks :strict</code>):</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The state must be an <code>rstate</code> — never an <code>istate</code>.
+(An <code>istate</code> invokes a child chart, and its segment is the bridge that lets the URL descend into the child&#8217;s URL space; without it, deep-URL traversal is impossible.)</p>
+</li>
+<li>
+<p>The state must be a leaf — no descendant route states.</p>
+</li>
+<li>
+<p>The state must be reached by walking <code>:initial</code> from its enclosing <code>routes</code> node down through any compound states' <code>:initial</code> declarations.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p><strong>Composition with <code>rstate</code> only</strong> — a chart whose default leaf wants to ride on the parent&#8217;s URL:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure">(sroute/routes {<span class="symbol">:id</span> <span class="symbol">:region/main</span> <span class="symbol">:routing/root</span> `ui/Root <span class="symbol">:initial</span> <span class="symbol">:ns/Home</span>}
+  <span class="comment">;; &quot;/&quot; enters Home (segment is empty, so only the parent contributes)</span>
+  (sroute/rstate {<span class="symbol">:route/target</span> <span class="symbol">:ns/Home</span> <span class="symbol">:route/segment</span> <span class="string"><span class="delimiter">&quot;</span><span class="delimiter">&quot;</span></span>})
+  <span class="comment">;; &quot;/settings&quot; is unaffected — it's not the initial-chain leaf</span>
+  (sroute/rstate {<span class="symbol">:route/target</span> <span class="symbol">:ns/Settings</span> <span class="symbol">:route/segment</span> <span class="string"><span class="delimiter">&quot;</span><span class="content">settings</span><span class="delimiter">&quot;</span></span>}))</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Composition with <code>istate</code> invoking a child chart</strong> — the parent <code>istate</code> always carries a real segment; the child chart&#8217;s <strong>initial</strong> leaf can carry the marker so that the parent&#8217;s segment alone is the URL:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="CodeRay highlight"><code data-lang="clojure"><span class="comment">;; Parent chart: istate `admin` invokes the admin child chart at /admin</span>
+(sroute/routes {<span class="symbol">:id</span> <span class="symbol">:region/main</span> <span class="symbol">:routing/root</span> `ui/Root}
+  (sroute/istate {<span class="symbol">:route/target</span> `ui/AdminPanel
+                  <span class="symbol">:route/segment</span> <span class="string"><span class="delimiter">&quot;</span><span class="content">admin</span><span class="delimiter">&quot;</span></span>     <span class="comment">;; REQUIRED — bridge into child URL</span>
+                  <span class="symbol">:route/reachable</span> {<span class="symbol">::Dashboard</span> <span class="string"><span class="delimiter">&quot;</span><span class="delimiter">&quot;</span></span>
+                                    <span class="symbol">::Users</span>    <span class="string"><span class="delimiter">&quot;</span><span class="content">users</span><span class="delimiter">&quot;</span></span>}}))
+
+<span class="comment">;; Child chart: Dashboard is the initial leaf and rides on /admin</span>
+(sroute/routes {<span class="symbol">:id</span> <span class="symbol">:admin/routes</span> <span class="symbol">:routing/root</span> `ui/AdminPanel <span class="symbol">:initial</span> <span class="symbol">::Dashboard</span>}
+  (sroute/rstate {<span class="symbol">:route/target</span> <span class="symbol">::Dashboard</span> <span class="symbol">:route/segment</span> <span class="string"><span class="delimiter">&quot;</span><span class="delimiter">&quot;</span></span>})  <span class="comment">;; &quot;/admin&quot;</span>
+  (sroute/rstate {<span class="symbol">:route/target</span> <span class="symbol">::Users</span>     <span class="symbol">:route/segment</span> <span class="string"><span class="delimiter">&quot;</span><span class="content">users</span><span class="delimiter">&quot;</span></span>})) <span class="comment">;; &quot;/admin/users&quot;</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>URL outcomes:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 40%;">
+<col style="width: 60%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Active leaf</th>
+<th class="tableblock halign-left valign-top">URL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Child chart at <code>Dashboard</code> (initial-chain leaf, empty segment)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/admin</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Child chart at <code>Users</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>/admin/users</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>If you put <code>:route/segment ""</code> on the parent <code>istate</code>, registration fails with <code>:routing/invalid-empty-segment</code> — the parent must always contribute a real segment because it is the bridge into the child&#8217;s URL.</p>
+</div>
 </div>
 <div class="sect4">
 <h5 id="_route_parameters"><a class="anchor" href="#_route_parameters"></a><a class="link" href="#_route_parameters">Route Parameters</a></h5>
@@ -3309,7 +3917,8 @@ When the parent exits the <code>istate</code>, the child session is terminated.<
 <p>The parent chart needs to know which targets exist inside the child chart so it can generate transitions to them.</p>
 </div>
 <div class="paragraph">
-<p><strong>Auto-derivation (recommended):</strong> When the <code>istate</code> target component has a co-located chart via <code>sfro/statechart</code>, the reachable targets are <strong>automatically derived</strong> by walking the child chart&#8217;s route targets. You do not need to declare <code>:route/reachable</code> at all:</p>
+<p><strong>Auto-derivation (recommended):</strong> When the <code>istate</code> target component has a co-located chart via <code>sfro/statechart</code>, the reachable targets are <strong>automatically derived</strong> by walking the child chart&#8217;s route targets.
+You do not need to declare <code>:route/reachable</code> at all:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3327,13 +3936,15 @@ When the parent exits the <code>istate</code>, the child session is terminated.<
 <div class="title">Note</div>
 </td>
 <td class="content">
-Auto-derivation requires <code>sfro/statechart</code> on the target component (not <code>sfro/statechart-id</code>). If neither an explicit <code>:route/reachable</code> nor a resolvable <code>sfro/statechart</code> is found, <code>istate</code> throws an error at chart construction time.
+Auto-derivation requires <code>sfro/statechart</code> on the target component (not <code>sfro/statechart-id</code>).
+If neither an explicit <code>:route/reachable</code> nor a resolvable <code>sfro/statechart</code> is found, <code>istate</code> throws an error at chart construction time.
 </td>
 </tr>
 </table>
 </div>
 <div class="paragraph">
-<p><strong>Manual override:</strong> You can still provide an explicit <code>:route/reachable</code> set, which takes precedence over auto-derivation. This is useful when you want to do code splitting and don&#8217;t have the component available at initial base load.</p>
+<p><strong>Manual override:</strong> You can still provide an explicit <code>:route/reachable</code> set, which takes precedence over auto-derivation.
+This is useful when you want to do code splitting and don&#8217;t have the component available at initial base load.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3353,10 +3964,12 @@ Auto-derivation requires <code>sfro/statechart</code> on the target component (n
 <div class="olist arabic">
 <ol class="arabic">
 <li>
-<p><strong>Not yet in the owner istate</strong>: The parent transitions into the istate and stores the desired route as <code>::pending-child-route</code>. When the child chart starts, its <code>routes</code> on-entry handler detects the pending route and raises it as an event.</p>
+<p><strong>Not yet in the owner istate</strong>: The parent transitions into the istate and stores the desired route as <code>::pending-child-route</code>.
+When the child chart starts, its <code>routes</code> on-entry handler detects the pending route and raises it as an event.</p>
 </li>
 <li>
-<p><strong>Already in the owner istate</strong>: The parent sends the route event directly to the child session via <code>scp/send!</code>. The child chart transitions internally without re-entering the <code>istate</code>.</p>
+<p><strong>Already in the owner istate</strong>: The parent sends the route event directly to the child session via <code>scp/send!</code>.
+The child chart transitions internally without re-entering the <code>istate</code>.</p>
 </li>
 </ol>
 </div>
@@ -3396,7 +4009,8 @@ The key differences are:</p>
 <div class="sect4">
 <h5 id="_advanced_istate_options"><a class="anchor" href="#_advanced_istate_options"></a><a class="link" href="#_advanced_istate_options">Advanced istate Options</a></h5>
 <div class="paragraph">
-<p>The <code>istate</code> function accepts additional options for controlling the child statechart invocation lifecycle. These are less commonly needed but available for advanced use cases:</p>
+<p>The <code>istate</code> function accepts additional options for controlling the child statechart invocation lifecycle.
+These are less commonly needed but available for advanced use cases:</p>
 </div>
 <div class="dlist">
 <dl>
@@ -3477,8 +4091,7 @@ If the child chart needs additional actors, declare them on the component:</p>
 <h4 id="_authentication_guard_pattern"><a class="anchor" href="#_authentication_guard_pattern"></a><a class="link" href="#_authentication_guard_pattern">7.6.6. Authentication Guard Pattern</a></h4>
 <div class="paragraph">
 <p>A common requirement is redirecting unauthenticated users to a login screen, then returning them to their original destination after login.
-There is no built-in library code for this, because the elements allow you to build the pattern and customize it to your
-application&#8217;s needs via things that statecharts can already do.</p>
+There is no built-in library code for this, because the elements allow you to build the pattern and customize it to your application&#8217;s needs via things that statecharts can already do.</p>
 </div>
 <div class="paragraph">
 <p>The demo application (<code>routing-demo2/chart.cljc</code>) demonstrates this pattern.</p>
@@ -3571,7 +4184,8 @@ It sits inside the <code>routes</code> node alongside the authenticated route st
     <span class="string"><span class="delimiter">&quot;</span><span class="content">Given a context map, return a URL path string (with query if needed).
      Context keys: :segments, :params, :route-elements</span><span class="delimiter">&quot;</span></span>)
   (decode-url [this href route-elements]
-    <span class="string"><span class="delimiter">&quot;</span><span class="content">Given a URL string and route-elements map, return {:leaf-id :params} or nil.</span><span class="delimiter">&quot;</span></span>))</code></pre>
+    <span class="string"><span class="delimiter">&quot;</span><span class="content">Given a URL string and route-elements map, return {:leaf-id :params}, or nil.
+     May return {:params &lt;map&gt;} without :leaf-id for cross-chart targets.</span><span class="delimiter">&quot;</span></span>))</code></pre>
 </div>
 </div>
 <div class="sect4">
@@ -3897,7 +4511,7 @@ It is cross-platform (CLJ + CLJS) and works in kaocha, REPL, and CI environments
 </table>
 </div>
 <div class="sect4">
-<h5 id="_lifecycle"><a class="anchor" href="#_lifecycle"></a><a class="link" href="#_lifecycle">Lifecycle</a></h5>
+<h5 id="_lifecycle_2"><a class="anchor" href="#_lifecycle_2"></a><a class="link" href="#_lifecycle_2">Lifecycle</a></h5>
 <table class="tableblock frame-all grid-all stretch">
 <colgroup>
 <col style="width: 42.8571%;">
@@ -4150,7 +4764,8 @@ It is cross-platform (CLJ + CLJS) and works in kaocha, REPL, and CI environments
 <div class="title">Note</div>
 </td>
 <td class="content">
-Functions like <code>route-to!</code>, <code>route-back!</code>, and others accept either a Fulcro app instance or a component instance (referred to as <code>app-ish</code> in the source). Use whichever is convenient in your context.
+Functions like <code>route-to!</code>, <code>route-back!</code>, and others accept either a Fulcro app instance or a component instance (referred to as <code>app-ish</code> in the source).
+Use whichever is convenient in your context.
 </td>
 </tr>
 </table>
@@ -4166,19 +4781,27 @@ Functions like <code>route-to!</code>, <code>route-back!</code>, and others acce
 <dl>
 <dt class="hdlist1"><code>sfro/initialize</code></dt>
 <dd>
-<p>One of <code>:once</code> (default), <code>:always</code>, or <code>:never</code>. Controls when the routing on-entry handler initializes the target component&#8217;s state. Forms default to <code>:always</code>; reports and plain components default to <code>:once</code>.</p>
+<p>One of <code>:once</code> (default), <code>:always</code>, or <code>:never</code>.
+Controls when the routing on-entry handler initializes the target component&#8217;s state.
+Forms default to <code>:always</code>; reports and plain components default to <code>:once</code>.</p>
 </dd>
 <dt class="hdlist1"><code>sfro/initial-props</code></dt>
 <dd>
-<p>A <code>(fn [env data] props-map)</code> that returns initial state for the route target. Defaults to <code>rc/get-initial-state</code>. Required when the target has a dynamic ident that depends on event data.</p>
+<p>A <code>(fn [env data] props-map)</code> that returns initial state for the route target.
+Defaults to <code>rc/get-initial-state</code>.
+Required when the target has a dynamic ident that depends on event data.</p>
 </dd>
 <dt class="hdlist1"><code>sfro/busy?</code></dt>
 <dd>
-<p>A <code>(fn [app props] boolean?)</code> predicate where <code>app</code> is the Fulcro app and <code>props</code> are the pre-resolved UI props of the component. When true, routing away from this target is denied. Forms with <code>form-state</code> are auto-guarded (dirty form = busy).</p>
+<p>A <code>(fn [app props] boolean?)</code> predicate where <code>app</code> is the Fulcro app and <code>props</code> are the pre-resolved UI props of the component.
+When true, routing away from this target is denied.
+Forms with <code>form-state</code> are auto-guarded (dirty form = busy).</p>
 </dd>
 <dt class="hdlist1"><code>sfro/statechart</code></dt>
 <dd>
-<p>A co-located statechart definition. Auto-registered using the component&#8217;s registry key when the <code>istate</code> is entered. Also enables auto-derivation of <code>:route/reachable</code> targets — <code>istate</code> walks this chart to discover all route targets transitively.</p>
+<p>A co-located statechart definition.
+Auto-registered using the component&#8217;s registry key when the <code>istate</code> is entered.
+Also enables auto-derivation of <code>:route/reachable</code> targets — <code>istate</code> walks this chart to discover all route targets transitively.</p>
 </dd>
 <dt class="hdlist1"><code>sfro/statechart-id</code></dt>
 <dd>
@@ -4186,7 +4809,8 @@ Functions like <code>route-to!</code>, <code>route-back!</code>, and others acce
 </dd>
 <dt class="hdlist1"><code>sfro/actors</code></dt>
 <dd>
-<p>A <code>(fn [env data] actors-map)</code> returning additional actors for the co-located statechart. The <code>:actor/component</code> actor is always set automatically.</p>
+<p>A <code>(fn [env data] actors-map)</code> returning additional actors for the co-located statechart.
+The <code>:actor/component</code> actor is always set automatically.</p>
 </dd>
 </dl>
 </div>
@@ -4222,6 +4846,10 @@ Functions like <code>route-to!</code>, <code>route-back!</code>, and others acce
 <li>
 <p><strong>Invalid routing root</strong>&#8201;&#8212;&#8201;a <code>routes</code> node with a nil or non-coercible <code>:routing/root</code>.</p>
 </li>
+<li>
+<p><strong>Invalid empty segment</strong>&#8201;&#8212;&#8201;<code>:route/segment ""</code> placed somewhere other than the initial-chain leaf of a <code>routes</code> node, or placed on an <code>istate</code> (which must always carry a real segment so the URL can descend into the child chart).
+See <a href="#_empty_segments_initial_leaf_marker">Empty Segments — Initial-Leaf Marker</a>.</p>
+</li>
 </ul>
 </div>
 <div class="admonitionblock tip">
@@ -4246,27 +4874,36 @@ Use <code>:routing/checks :strict</code> during development to catch configurati
 <dl>
 <dt class="hdlist1">Constant ident roots</dt>
 <dd>
-<p>The <code>:routing/root</code> component MUST have a constant ident (e.g. <code>[:component/id ::Root]</code>). A nil second element in the ident is an error and the routing entry handler will log an error and skip query rewriting. The app root (no ident) is also acceptable.</p>
+<p>The <code>:routing/root</code> component MUST have a constant ident (e.g. <code>[:component/id ::Root]</code>).
+A nil second element in the ident is an error and the routing entry handler will log an error and skip query rewriting.
+The app root (no ident) is also acceptable.</p>
 </dd>
 <dt class="hdlist1">Dynamic query preservation</dt>
 <dd>
-<p>Route target parents MUST set <code>:preserve-dynamic-query? true</code> in their component options. Without this, Fulcro hot code reload will reset the dynamically-rewritten query, breaking the active route&#8217;s rendering.</p>
+<p>Route target parents MUST set <code>:preserve-dynamic-query? true</code> in their component options.
+Without this, Fulcro hot code reload will reset the dynamically-rewritten query, breaking the active route&#8217;s rendering.</p>
 </dd>
 <dt class="hdlist1">Unique URL segments</dt>
 <dd>
-<p>Each route target&#8217;s URL segment (<code>:route/segment</code> or the simple name of <code>:route/target</code>) must be unique within its routing region. Duplicate segments cause ambiguous URL-to-route matching. Use <code>:routing/checks :strict</code> during development to catch these early.</p>
+<p>Each route target&#8217;s URL segment (<code>:route/segment</code> or the simple name of <code>:route/target</code>) must be unique within its routing region.
+Duplicate segments cause ambiguous URL-to-route matching.
+Use <code>:routing/checks :strict</code> during development to catch these early.</p>
 </dd>
 <dt class="hdlist1">Guard evaluation order</dt>
 <dd>
-<p>When a route transition is attempted, <code>sroute/busy?</code> is evaluated first. If any active route target (at any depth in the invocation tree) returns busy, the transition is denied and <code>record-failed-route!</code> stores the event for potential retry via <code>force-continue-routing!</code>.</p>
+<p>When a route transition is attempted, <code>sroute/busy?</code> is evaluated first.
+If any active route target (at any depth in the invocation tree) returns busy, the transition is denied and <code>record-failed-route!</code> stores the event for potential retry via <code>force-continue-routing!</code>.</p>
 </dd>
 <dt class="hdlist1">Single routing session</dt>
 <dd>
-<p>All routing goes through the single <code>sroute/session-id</code> session. Parallel regions within the routing chart handle multiple independent routing areas&#8201;&#8212;&#8201;do not create multiple routing sessions.</p>
+<p>All routing goes through the single <code>sroute/session-id</code> session.
+Parallel regions within the routing chart handle multiple independent routing areas&#8201;&#8212;&#8201;do not create multiple routing sessions.</p>
 </dd>
 <dt class="hdlist1">State ID derivation</dt>
 <dd>
-<p>Both <code>rstate</code> and <code>istate</code> derive their <code>:id</code> from <code>:route/target</code>. Passing an explicit <code>:id</code> throws an exception. This ensures state IDs and route targets are always consistent.</p>
+<p>Both <code>rstate</code> and <code>istate</code> derive their <code>:id</code> from <code>:route/target</code>.
+Passing an explicit <code>:id</code> throws an exception.
+This ensures state IDs and route targets are always consistent.</p>
 </dd>
 </dl>
 </div>
@@ -4292,7 +4929,8 @@ Call <code>(sroute/route-denied? app)</code> to verify.
 If the route is denied, either clear the busy condition or use <code>force-continue-routing!</code>.</p>
 </div>
 <div class="paragraph">
-<p>Also ensure the target is reachable: for targets inside a child chart, the parent&#8217;s <code>istate</code> must have reachable targets (auto-derived from <code>sfro/statechart</code> or explicitly declared via <code>:route/reachable</code>). Use <code>(sroute/reachable-targets chart)</code> to inspect what targets are visible.</p>
+<p>Also ensure the target is reachable: for targets inside a child chart, the parent&#8217;s <code>istate</code> must have reachable targets (auto-derived from <code>sfro/statechart</code> or explicitly declared via <code>:route/reachable</code>).
+Use <code>(sroute/reachable-targets chart)</code> to inspect what targets are visible.</p>
 </div>
 </div>
 <div class="sect4">
@@ -4479,10 +5117,8 @@ So, another helper <code>testing/configuration-for-states</code> allows you to g
 <h2 id="_visualization_and_simulation"><a class="anchor" href="#_visualization_and_simulation"></a><a class="link" href="#_visualization_and_simulation">9. Visualization and Simulation</a></h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The <code>com.fulcrologic.statecharts.visualization</code> namespace provides tools for visualizing and
-interactively simulating statecharts. The visualizer renders your chart as a UML-style state
-diagram and, when connected to a running application, lets you observe live session state in
-real time.</p>
+<p>The <code>com.fulcrologic.statecharts.visualization</code> namespace provides tools for visualizing and interactively simulating statecharts.
+The visualizer renders your chart as a UML-style state diagram and, when connected to a running application, lets you observe live session state in real time.</p>
 </div>
 <div class="paragraph">
 <p>There are two main components:</p>
@@ -4490,22 +5126,18 @@ real time.</p>
 <div class="ulist">
 <ul>
 <li>
-<p><strong>Simulator</strong> — A pure CLJ/CLJS API for stepping through a statechart interactively at the
-REPL or in a browser UI, using the real processor but with a mock execution model.</p>
+<p><strong>Simulator</strong> — A pure CLJ/CLJS API for stepping through a statechart interactively at the REPL or in a browser UI, using the real processor but with a mock execution model.</p>
 </li>
 <li>
-<p><strong>Visualization Server</strong> — A standalone Ring server (or embeddable Pathom resolvers) that
-exposes chart definitions and live session state to the browser visualizer.</p>
+<p><strong>Visualization Server</strong> — A standalone Ring server (or embeddable Pathom resolvers) that exposes chart definitions and live session state to the browser visualizer.</p>
 </li>
 </ul>
 </div>
 <div class="sect2">
 <h3 id="_the_simulator_api"><a class="anchor" href="#_the_simulator_api"></a><a class="link" href="#_the_simulator_api">9.1. The Simulator API</a></h3>
 <div class="paragraph">
-<p>The simulator (<code>com.fulcrologic.statecharts.visualization.simulator</code>) runs your chart using the
-real processor but with a custom execution model: guard predicates become user-toggleable
-booleans, and all other executable content (scripts, assigns, sends) is a noop. This lets you
-step through the chart&#8217;s control flow without any real side-effects.</p>
+<p>The simulator (<code>com.fulcrologic.statecharts.visualization.simulator</code>) runs your chart using the real processor but with a custom execution model: guard predicates become user-toggleable booleans, and all other executable content (scripts, assigns, sends) is a noop.
+This lets you step through the chart&#8217;s control flow without any real side-effects.</p>
 </div>
 <div class="paragraph">
 <p>Key functions:</p>
@@ -4585,8 +5217,8 @@ step through the chart&#8217;s control flow without any real side-effects.</p>
 <div class="sect2">
 <h3 id="_diagram_labels"><a class="anchor" href="#_diagram_labels"></a><a class="link" href="#_diagram_labels">9.2. Diagram Labels</a></h3>
 <div class="paragraph">
-<p>By default the visualizer uses element IDs and transition event names as labels. You can
-override these with two metadata keys on your chart elements:</p>
+<p>By default the visualizer uses element IDs and transition event names as labels.
+You can override these with two metadata keys on your chart elements:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -4635,8 +5267,8 @@ as entry activities, <code>stop-spinner</code> as an exit activity, and the tran
 <div class="sect2">
 <h3 id="_standalone_visualization_server"><a class="anchor" href="#_standalone_visualization_server"></a><a class="link" href="#_standalone_visualization_server">9.3. Standalone Visualization Server</a></h3>
 <div class="paragraph">
-<p>The easiest way to visualize a chart is to run the standalone server. It serves the browser UI
-and exposes the Pathom API in one step.</p>
+<p>The easiest way to visualize a chart is to run the standalone server.
+It serves the browser UI and exposes the Pathom API in one step.</p>
 </div>
 <div class="paragraph">
 <p>The server supports three modes:</p>
@@ -4647,12 +5279,10 @@ and exposes the Pathom API in one step.</p>
 <p><strong>Static mode</strong> — renders a chart definition passed on the command line; no live session data.</p>
 </li>
 <li>
-<p><strong>Connected/REPL mode</strong> — connects to a running nREPL server and pulls chart definitions and
-session state from your live application.</p>
+<p><strong>Connected/REPL mode</strong> — connects to a running nREPL server and pulls chart definitions and session state from your live application.</p>
 </li>
 <li>
-<p><strong>Proxy mode</strong> — forwards Pathom queries to a remote server that already has the resolvers
-installed.</p>
+<p><strong>Proxy mode</strong> — forwards Pathom queries to a remote server that already has the resolvers installed.</p>
 </li>
 </ol>
 </div>
@@ -4687,8 +5317,7 @@ clojure -M:viz --proxy-url http://localhost:3000/api</code></pre>
 <div class="sect2">
 <h3 id="_embedding_in_your_own_server"><a class="anchor" href="#_embedding_in_your_own_server"></a><a class="link" href="#_embedding_in_your_own_server">9.4. Embedding in Your Own Server</a></h3>
 <div class="paragraph">
-<p>If you already have a Ring + Pathom server you can add the visualization resolvers directly,
-giving the browser UI access to your live chart registry and working memory store.</p>
+<p>If you already have a Ring + Pathom server you can add the visualization resolvers directly, giving the browser UI access to your live chart registry and working memory store.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -4734,9 +5363,8 @@ giving the browser UI access to your live chart registry and working memory stor
 <div class="sect2">
 <h3 id="_live_session_monitoring"><a class="anchor" href="#_live_session_monitoring"></a><a class="link" href="#_live_session_monitoring">9.5. Live Session Monitoring</a></h3>
 <div class="paragraph">
-<p>When the server has a working memory store available, the browser UI can display which states
-are currently active in any running session. The <code>search-for-sessions</code> multimethod lets you
-plug in your own session-discovery logic.</p>
+<p>When the server has a working memory store available, the browser UI can display which states are currently active in any running session.
+The <code>search-for-sessions</code> multimethod lets you plug in your own session-discovery logic.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -4755,17 +5383,16 @@ plug in your own session-discovery logic.</p>
 </div>
 </div>
 <div class="paragraph">
-<p>The <code>search-string</code> argument comes from the browser&#8217;s session search box. You can filter by
-user name, session ID prefix, or any application-specific criterion. The default implementation
-logs a warning and returns an empty vector.</p>
+<p>The <code>search-string</code> argument comes from the browser&#8217;s session search box.
+You can filter by user name, session ID prefix, or any application-specific criterion.
+The default implementation logs a warning and returns an empty vector.</p>
 </div>
 </div>
 <div class="sect2">
 <h3 id="_post_api_for_external_tools"><a class="anchor" href="#_post_api_for_external_tools"></a><a class="link" href="#_post_api_for_external_tools">9.6. POST API for External Tools</a></h3>
 <div class="paragraph">
-<p>The resolvers expose a <code>send-event</code> Pathom mutation that lets external tools trigger state
-transitions without a UI. This is useful for scripted testing or integration from non-Clojure
-environments.</p>
+<p>The resolvers expose a <code>send-event</code> Pathom mutation that lets external tools trigger state transitions without a UI.
+This is useful for scripted testing or integration from non-Clojure environments.</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -4805,7 +5432,8 @@ curl -X POST http://localhost:8080/api \
 </td>
 <td class="content">
 The <code>send-event</code> mutation requires the Pathom environment to have <code>::sc/working-memory-store</code>
-and <code>::sc/processor</code> available. Static-mode standalone servers do not support this mutation.
+and <code>::sc/processor</code> available.
+Static-mode standalone servers do not support this mutation.
 </td>
 </tr>
 </table>
@@ -4940,7 +5568,7 @@ Note that it is possible for a bugfix in this library to change the behavior of 
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-03-29 13:59:23 +0200
+Last updated 2026-05-22 21:32:14 +0200
 </div>
 </div>
 </body>
