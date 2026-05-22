@@ -4,6 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - You can see CLJS compile status (warnings/errors, as well as completion) using `src/dev/shadow_cljs_checker.clj`
 - Shadow-cljs will usually be running already, as will a Clojure REPL, use clojure-mcp to access REPLs for these
+- **ALWAYS run CLJ tests with guardrails enforcing mode locally before declaring tests pass.** The CI workflow (`.github/workflows/tests.yml`) runs kaocha with `-J-Dguardrails.enabled=true -J-Dguardrails.config=guardrails-test.edn`, which catches spec violations a plain `kaocha.repl/run` will miss. To match CI from the shell:
+  `clojure -J-Dguardrails.enabled=true -J-Dguardrails.config=guardrails-test.edn -M:dev:test -e "(require '[kaocha.repl :as k]) (k/run 'your.ns-spec)"`
+  Plain `kaocha.repl/run` calls without those `-J` flags are NOT sufficient — they silently bypass guardrails and let bad calls through. CI will reject what your local run accepted.
 
 ## AI Helper Documentation
 

@@ -607,6 +607,244 @@ include::src/examples/custom_invocation.cljc[]
 The `transition` element responds to the events received by the state chart, and the invocation processor for an `invoke` can send such events.
 So, the timer service here is sending `:interval-timer/timeout` events.
 
+=== Multiplex (Dynamic Fan-Out)
+
+SCXML `<invoke>` declarations are static: one declaration starts exactly one child.
+Many real-world patterns — N voting agents, M-of-N retry, runtime-sized worker pools, heterogeneous panels of mixed children — need *dynamic* multiplicity that you can't know at chart-authoring time.
+
+The library ships with a general-purpose `InvocationProcessor` that fans out a single `<invoke>` declaration into N invocations of any other registered invocation type, with count, child type, and per-child params all computed at runtime against the parent's data model.
+It preserves every standard SCXML guarantee: algorithm-managed lifecycle, a single `done.invoke.<mux-id>` to the grandparent when the cohort finishes, and clean parent↔child event routing.
+
+==== Installation
+
+`with-multiplex` is an idempotent installer — safe to call any number of times.
+It also installs the *statechart* invocation processor if it isn't already present, because multiplex's internal aggregator chart needs it.
+Users who only intend to multiplex non-statechart children (HTTP, futures, custom processors) do not need to install anything separately.
+
+[source,clojure]
+-----
+(require '[com.fulcrologic.statecharts.invocation.multiplex :as mux]
+         '[com.fulcrologic.statecharts.invocation.multiplex-options :as mo]
+         '[com.fulcrologic.statecharts.invocation.multiplex-processor :as mp])
+
+(def env (-> (simple/simple-env) mp/with-multiplex))
+-----
+
+==== The `multiplex` Element
+
+`(mux/multiplex {...})` emits an ordinary `invoke` element whose type is the multiplex type.
+
+[source,clojure]
+-----
+(require '[com.fulcrologic.statecharts :as sc]
+         '[com.fulcrologic.statecharts.chart :refer [statechart]]
+         '[com.fulcrologic.statecharts.elements :refer [state on-entry transition final]])
+
+;; A small "judge" chart, registered under ::judge.
+(def judge-chart
+  (statechart {}
+    (state {:id :evaluate}
+      (on-entry {}
+        (script {:expr (fn [env data]
+                         (mux/reply env :score-ready {:score (rand)}))}))
+      (transition {:event :score-ready :target :done}))
+    (final {:id :done})))
+
+;; Parent chart with three judges fanned out by one declaration.
+(def panel
+  (statechart {:initial :judging}
+    (state {:id :judging}
+      (mux/multiplex
+        {:id              :judges
+         mo/child-type    ::sc/chart
+         mo/count         3
+         mo/child-params  (fn [_env _data idx]
+                            {:src    ::judge
+                             :params {:judge/idx idx}})})
+      (transition {:event :done.invoke.judges :target :result}))
+    (state {:id :result} ...)))
+-----
+
+Required keys on the options map:
+
+`:id`:: The invokeid for this multiplex. May not have `multiplex` as either its name or its namespace — `:multiplex`, `:multiplex/foo`, and `:foo/multiplex` are all rejected at construction time (reserved as the child-sid prefix).
+`mo/child-type`:: The underlying invocation type used for every child (e.g. `::sc/chart`).
+`mo/count`:: Number of children to spawn.
+
+Optional:
+
+`mo/child-params`:: `(fn [env data idx])` returning the full start-invocation arg shape the underlying processor expects (for statechart children this is `{:src ::chart-key :params {...}}`). Defaults to a fn returning `{}`.
+`:autoforward`:: Pass-through to the underlying `invoke`. *Defaults to `true`* — the multiplex's parent → cohort routing relies on the autoforward path, so you normally do not set this. Pass `:autoforward false` only if you want to disable forwarding entirely and manage cohort routing yourself (rare; `mux/send` will not work for that multiplex).
+
+==== Runtime Dynamism
+
+`mo/count` and `mo/child-type` may be literals OR `(fn [env data])` (or 4-arity when the execution model has `explode-event?`).
+They are evaluated *once* at start-invocation time against the parent's data model:
+
+[source,clojure]
+-----
+(mux/multiplex
+  {:id              :workers
+   mo/child-type    ::sc/chart
+   mo/count         (fn [_env data] (count (:queue/jobs data)))   ; dynamic N
+   mo/child-params  (fn [_env data idx]
+                      {:src    ::worker
+                       :params {:job (nth (:queue/jobs data) idx)}})})
+-----
+
+`mo/child-params` is always a function of `(env, data, idx)` and is called once per child at fan-out time.
+If it needs event context, read `:_event` from `data`.
+
+==== Child Naming and Event Matching
+
+Each child gets the invokeid `:multiplex.<mux-id>.<idx>` — e.g. `:multiplex.judges.0`.
+The `multiplex.` prefix is critical: it prevents SCXML dot-prefix matching from conflating per-child done events with the cohort's own done event.
+
+Given a `:judges` multiplex with three children, you can match three useful granularities:
+
+[cols="3,1,1,1", options="header"]
+|===
+| Event fired | Matches `done.invoke.judges` | Matches `done.invoke.multiplex.judges` | Matches `done.invoke.multiplex.judges.1`
+
+| `done.invoke.judges` (cohort summary) | yes | no | no
+| `done.invoke.multiplex.judges.0`      | no  | yes | no
+| `done.invoke.multiplex.judges.1`      | no  | yes | yes
+| `done.invoke.multiplex.judges.2`      | no  | yes | no
+|===
+
+[source,clojure]
+-----
+(transition {:event :done.invoke.judges             :target :all-done})
+(transition {:event :done.invoke.multiplex.judges   :target :one-replied})
+(transition {:event :done.invoke.multiplex.judges.1 :target :judge-1-done})
+-----
+
+==== Cohort Completion
+
+When the multiplex starts, the processor synthesizes a small internal *aggregator* statechart and starts it at sid = `<mux-id>`.
+Each child's `::sc/parent-session-id` is set to the multiplex's sid, so every `done.invoke.<child-sid>` routes to the aggregator.
+The aggregator counts these and transitions to its `:done` final state when all N have completed — at which point the W3C algorithm fires the standard `done.invoke.<mux-id>` event to the grandparent.
+
+The grandparent sees *exactly one* summary event when the whole cohort is finished, just as it would for any ordinary `<invoke>`.
+
+In addition, the aggregator *re-emits each per-child done event* (`done.invoke.multiplex.<mux-id>.<K>`) to the grandparent. User charts can therefore observe per-child completion to drive UI updates (a progress bar, a "Judge 1 complete!" toast, an early-exit decision) without having to wait for the cohort summary. All three match granularities shown above fire on the grandparent:
+
+[cols="3,5", options="header"]
+|===
+| Grandparent transition `:event` | Fires when
+
+| `:done.invoke.judges`              | The whole cohort is complete. Once.
+| `:done.invoke.multiplex.judges`    | ANY single judge completes (prefix-matches all per-child events). N times — once per child.
+| `:done.invoke.multiplex.judges.1`  | Judge 1 specifically completes. Once.
+|===
+
+==== Child Start Failures
+
+If an underlying processor refuses to start a child — for example, a statechart child whose `:src` is not registered — multiplex does two things automatically:
+
+- Enqueues a synthetic `done.invoke.multiplex.<mux-id>.<K>` event to the aggregator's session, so the aggregator's tally still reaches N. The cohort's `done.invoke.<mux-id>` still fires for the grandparent.
+- Forwards an `:error.platform` event to the grandparent with `{:invokeid <child-sid> :reason ...}` in its data so user code can react.
+
+This applies to both sync `false` returns and async rejected promises. A handful of failed starts will not deadlock the cohort.
+
+==== Parent to Cohort Routing
+
+The recommended way for a grandparent to send events to a cohort is `mux/send`, a convenience element constructor that produces the correct `<send>` for you:
+
+[source,clojure]
+-----
+;; Inside a transition or on-entry in the grandparent chart:
+
+;; Broadcast to every child (the default):
+(mux/send {:target :judges :event :go :data {:payload 1}})
+
+;; Address a specific child by index:
+(mux/send {:target :judges :idx 1 :event :evaluate :data {:item the-item}})
+
+;; Deliver to one arbitrary child:
+(mux/send {:target :judges :idx :any :event :go})
+-----
+
+Option keys:
+
+`:target`:: (Required.) The multiplex's `:id` (keyword).
+`:event`::  (Required.) Event-name keyword to deliver.
+`:idx`::    (Optional.) Integer K, `:any`, or `:all`. Defaults to `:all` (broadcast).
+`:data`::   (Optional.) User data merged into the outgoing event's `:data`.
+
+`mux/send` works because `:autoforward` is on by default. If you explicitly set `:autoforward false` on the multiplex, `mux/send` will not route events to that multiplex's children — you would have to write your own send and your own forwarding.
+
+Under the hood, `mux/send` addresses the grandparent's own session and embeds `mo/to` (the route) and `mo/target-mux` (the multiplex `:id` discriminator) into event data. The algorithm's autoforward path then delivers the event to all multiplex invocations active in the parent state; each multiplex's `forward-event!` checks `mo/target-mux` and either claims the event or no-ops. The processor strips both `mo/to` and `mo/target-mux` from event data and adds `mo/from` before delivering to the chosen child(ren).
+
+[NOTE]
+====
+Writing a raw `(send {:target :#_<mux-id> ...})` does *not* route through the multiplex: that addresses the multiplex's *aggregator session*, which only handles per-child done events. Use `mux/send` for targeted parent → cohort routing.
+====
+
+===== Multiple Multiplexes in One State
+
+Multiple `mux/multiplex` elements can live in the same parent state. Because `mux/send` automatically embeds the target's `:id` in event data as `mo/target-mux`, the autoforward path delivers each event to every sibling multiplex but only the *targeted* multiplex acts on it; the others no-op cleanly. This lets you compose, say, a `:judges` cohort and a `:scribes` cohort side by side and address each independently.
+
+If you author a raw `<send>` (not via `mux/send`) that triggers autoforward, the event will be processed by *every* active multiplex in the state — that is the standard SCXML autoforward semantic, and the legacy broadcast behavior is preserved for raw callers that omit `mo/target-mux`. Prefer `mux/send` for targeted routing.
+
+`mo/from` annotates events crossing the multiplex boundary, and its shape depends on direction:
+
+- *Parent to child* (added automatically by the multiplex's `forward-event!`): `{:sid <grandparent-sid>}`.
+- *Child to parent* (added by `mux/reply`): `{:sid <child-sid> :idx <K> :invokeid <mux-id> :grandparent <grandparent-sid>}`.
+
+The asymmetry is intentional: the parent is not a member of the cohort, so it has no `:idx` or `:invokeid`.
+Receivers can address a follow-up at a specific child via `(mux/send {:target <mux-id> :idx K :event :follow-up})`.
+
+==== Cohort to Outside Routing
+
+Children call `mux/reply` to send an event to the grandparent (the session that declared the multiplex).
+It reads `mo/identity` from the child's data model and merges it into outgoing event data under `mo/from`, so the receiver can address a follow-up back at this specific child:
+
+[source,clojure]
+-----
+(script {:expr (fn [env data]
+                 (mux/reply env :score-ready {:score 0.83}))})
+-----
+
+The grandparent receives `{:score 0.83, mo/from {:sid :multiplex.judges.2 :idx 2 :invokeid :judges :grandparent <gp-sid>}}` and can target a follow-up via `(mux/send {:target :judges :idx 2 :event :next ...})`.
+
+==== `mo/identity`
+
+The multiplex automatically seeds `mo/identity {:sid :idx :invokeid :grandparent}` into each child statechart's data model at start.
+Authors generally don't need to read it directly — `mux/reply` does that for them.
+For non-statechart child types the value is still injected into the child's params; that processor decides how (or whether) to expose it.
+
+==== Edge Case: `mo/count = 0`
+
+The aggregator is started with `:n 0` and an eventless transition fires immediately on entry, sending `done.invoke.<mux-id>` to the grandparent without spawning any children.
+Behaviour is symmetric with the N>0 case.
+
+==== Lifecycle
+
+When the parent state exits, the algorithm calls `stop-invocation!` on the multiplex.
+The processor stops the aggregator first (so any in-flight tally updates don't fire a late cohort done event) and then stops all N children via their underlying processor.
+
+==== Async Engines
+
+The multiplex processor honors the library's sync/async contract:
+
+- Under `simple/simple-env`, every `sp/start-invocation!` returns plain `true`. Multiplex returns `true` synchronously — no promise wrapping.
+- Under `simple-async/simple-env`, child or aggregator starts may return promises. Multiplex's own `start-invocation!` then returns `Promise<true>` that resolves once all child starts AND the aggregator start have settled. `stop-invocation!` behaves analogously: it awaits the aggregator and child cleanups before reporting completion.
+- Children are spawned *after* the aggregator's start resolves, so the aggregator's session is always registered to receive child done events before any child can fire one.
+
+Implementation reference: the same pattern used by `invocation/statechart.cljc` (the canonical async-aware invocation processor).
+
+==== Limitations
+
+- `:id` cannot have `multiplex` as either its name or its namespace. All of `:multiplex`, `:multiplex/foo`, and `:foo/multiplex` are rejected at construction time, because the multiplex processor uses the `multiplex.` prefix on child sids and dot-prefix event matching would otherwise produce false collisions.
+- For statechart children, `mo/child-params` must return start-invocation maps shaped like `{:src ::chart-key :params {...}}`.
+- Built-in termination policy is "all children done." First-reply, m-of-n, and other policies are not built in — compose them in the grandparent by tallying child done events yourself and emitting your own summary events.
+- Cross-cohort coordination ("fire when either of two sibling multiplexes finishes first") is also a grandparent-side pattern.
+- `mo/from` on outgoing events from non-statechart child processors is a convention, not enforced.
+- `mux/send` requires `:autoforward true` (the default). If you set `:autoforward false`, neither `mux/send` nor any raw `<send>` to `#_<mux-id>` will reach the cohort via `forward-event!` — you must implement your own targeted send mechanism.
+- `mo/target-mux` is library-controlled: `mux/send` writes it for you. User code should not normally write it directly — use `mux/send`.
+- *Nested multiplex with shared `:id`*: when multiple instances of the same child chart run concurrently (e.g. as siblings under an outer multiplex), each instance tries to claim the same aggregator and child session-ids. Give each inner multiplex a unique `:id` per outer instance — vary it from inside `mo/child-params` using `idx` to disambiguate, or author distinct child charts per outer position. This is the same explicit-id constraint that affects any SCXML `<invoke>` instantiated multiple times concurrently; it just bites nested fan-out harder.
+
 = Shorthand Convenience [[Convenience]]
 
 Making your state chart definition cleaner is a simple matter, since it is nothing more than a nested data structure.
