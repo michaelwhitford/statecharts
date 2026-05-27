@@ -49,7 +49,9 @@
     [com.fulcrologic.statecharts.protocols :as sp]
     [com.fulcrologic.statecharts.registry.local-memory-registry :as lmr]
     [com.fulcrologic.statecharts.util :refer [new-uuid]]
-    [promesa.core :as p]))
+    ;; Use the statecharts promise shim (IS promesa on CLJ when present, native fallback otherwise)
+    ;; so this ns loads under babashka, whose SCI cannot load promesa.
+    [com.fulcrologic.statecharts.promise :as p]))
 
 (def local-data-path
   "[session-id & ks]

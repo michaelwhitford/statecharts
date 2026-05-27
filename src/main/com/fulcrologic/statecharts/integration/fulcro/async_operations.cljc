@@ -32,7 +32,8 @@
     [com.fulcrologic.fulcro.raw.application :as rapp]
     [com.fulcrologic.statecharts.util :refer [new-uuid now-ms]]
     [edn-query-language.core :as eql]
-    [promesa.core :as p]
+    ;; promise shim (IS promesa on CLJ when present) so this loads under babashka.
+    [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log])
   #?(:clj (:import [com.fulcrologic.statecharts.execution_model.lambda_async AsyncCLJCExecutionModel])))
 
