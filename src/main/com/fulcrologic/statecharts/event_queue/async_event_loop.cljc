@@ -9,7 +9,6 @@
     [com.fulcrologic.statecharts.protocols :as sp]
     [com.fulcrologic.statecharts.event-queue.async-event-processing :as aep]
     [com.fulcrologic.statecharts.promise :as p]
-    [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
 
 (defn- await-if-promise
@@ -43,7 +42,7 @@
   (let [running? (atom true)]
     (async/go-loop []
       (async/<! (async/timeout resolution-ms))
-      (enc/catching
+      (try
         (sp/receive-events! event-queue env
           (fn [env {:keys [target] :as event}]
             (log/trace "Received event" event)
@@ -59,7 +58,8 @@
               ;; For proper serialization, the async event handler returns a promise
               ;; and we trust that the event queue implementation handles this.
               nil))
-          {}))
+          {})
+        (catch #?(:clj Throwable :cljs :default) _ nil))
       (if @running?
         (recur)
         (log/debug "Async event loop ended")))
@@ -80,13 +80,14 @@
         (async/<! ch)
         (reset! pending-result nil))
       (async/<! (async/timeout resolution-ms))
-      (enc/catching
+      (try
         (sp/receive-events! event-queue env
           (fn [env {:keys [target] :as event}]
             (let [result (aep/async-statechart-event-handler env event)]
               (when (p/promise? result)
                 (reset! pending-result result))))
-          {}))
+          {})
+        (catch #?(:clj Throwable :cljs :default) _ nil))
       (if @running?
         (recur)
         (log/debug "Serialized async event loop ended")))

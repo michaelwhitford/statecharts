@@ -26,7 +26,6 @@
     [com.fulcrologic.statecharts.integration.fulcro.routing.url-codec-transit :as ruct]
     [com.fulcrologic.statecharts.protocols :as scp]
     [edn-query-language.core :as eql]
-    [taoensso.encore :as enc]
     [taoensso.timbre :as log]
     #?@(:cljs [[com.fulcrologic.statecharts.integration.fulcro.routing.browser-history :as bh]])))
 
@@ -567,7 +566,7 @@
                            :idlocation  [:invocation/id target-key]
                            :type        :statechart
                            :srcexpr     (fn [{:fulcro/keys [app] :as env} data & _]
-                                          (enc/if-let [Target (rc/registry-key->class target-key)]
+                                          (if-let [Target (rc/registry-key->class target-key)]
                                             (let [id    (or statechart-id (rc/component-options Target sfro/statechart-id))
                                                   chart (rc/component-options Target sfro/statechart)]
                                               (cond
@@ -980,9 +979,10 @@
        (fn [acc target-key]
          (if (contains? seen target-key)
            acc
-           (enc/if-let [cls   (rc/registry-key->class target-key)
-                        child (rc/component-options cls sfro/statechart)]
-             (into acc (reachable-targets child (conj seen target-key)))
+           (if-let [cls (rc/registry-key->class target-key)]
+             (if-let [child (rc/component-options cls sfro/statechart)]
+               (into acc (reachable-targets child (conj seen target-key)))
+               acc)
              acc)))
        direct
        direct))))

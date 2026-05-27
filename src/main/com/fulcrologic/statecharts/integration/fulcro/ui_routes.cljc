@@ -29,7 +29,6 @@
     [com.fulcrologic.statecharts.integration.fulcro.ui-routes-options :as ro]
     [com.fulcrologic.statecharts.protocols :as scp]
     [edn-query-language.core :as eql]
-    [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
 
 (defn form?
@@ -315,7 +314,7 @@
                            :idlocation  [:invocation/id target-key]
                            :type        :statechart
                            :srcexpr     (fn [{:fulcro/keys [app] :as env} data & _]
-                                          (enc/if-let [Target (rc/registry-key->class target-key)]
+                                          (if-let [Target (rc/registry-key->class target-key)]
                                             (let [id    (or statechart-id (rc/component-options Target ro/statechart-id))
                                                   chart (rc/component-options Target ro/statechart)]
                                               (cond
@@ -616,11 +615,10 @@
    tree."
   [app-ish]
   [::scf/fulcro-appish => [:set :qualified-keyword]]
-  (enc/if-let [chart         (scf/lookup-statechart app-ish ::chart)
-               active-states (into #{}
-                               (filter #(leaf-route? chart %))
-                               (scf/current-configuration app-ish session-id))]
-    active-states
+  (if-let [chart (scf/lookup-statechart app-ish ::chart)]
+    (into #{}
+      (filter #(leaf-route? chart %))
+      (scf/current-configuration app-ish session-id))
     #{}))
 
 (>defn route-denied? [app-ish]

@@ -11,7 +11,6 @@
     [clojure.core.async :as async]
     [com.fulcrologic.statecharts :as sc]
     [com.fulcrologic.statecharts.protocols :as sp]
-    [taoensso.encore :as enc]
     [com.fulcrologic.statecharts.promise :as p]
     [taoensso.timbre :as log]))
 
@@ -38,7 +37,7 @@
   (let [running? (atom true)]
     (async/go-loop []
       (async/<! (async/timeout resolution-ms))
-      (enc/catching
+      (try
         (sp/receive-events! event-queue env
           (fn [env {:keys [target] :as event}]
             (log/trace "Received event" event)
@@ -54,7 +53,8 @@
                 (if (p/promise? result)
                   (p/then result save-fn)
                   (save-fn result)))))
-          {}))
+          {})
+        (catch #?(:clj Throwable :cljs :default) _ nil))
       (if @running?
         (recur)
         (log/debug "Event loop ended")))
