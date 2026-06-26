@@ -42,6 +42,28 @@
        true
        (catch Throwable _ false))))
 
+;; Fail fast on a present-but-too-old promesa. `promesa.core/await!` was added
+;; in 10.0.570; older versions (e.g. 8.0.450) load fine but lack it, so the
+;; `(intern ... (deref (resolve 'promesa.core/await!)))` below blows up while
+;; this namespace is loading. The resulting failure is cryptic and far from the
+;; root cause (e.g. under shadow-cljs it surfaces as a macro-loading error like
+;; `No namespace: com.fulcrologic.statecharts.promise found`). Silently falling
+;; back to native mode would also be unsafe: native `promise?` is
+;; `(instance? IPending v)`, but a real promesa JVM promise is a CompletionStage
+;; (NOT IPending), so async expressions returning promesa promises would be
+;; mis-handled by the engine. So this is a hard error with an actionable message.
+#?(:clj
+   (when (and promesa-available?
+              (nil? (resolve 'promesa.core/await!)))
+     (throw (ex-info
+              (str "An outdated funcool/promesa is on the classpath: "
+                   "com.fulcrologic.statecharts.promise requires promesa.core/await!, "
+                   "which was added in promesa 10.0.570. Upgrade funcool/promesa to "
+                   ">= 10.0.570 (or remove it from the classpath entirely to use the "
+                   "native, promesa-free fallback).")
+              {:missing-promesa-sym 'promesa.core/await!
+               :min-promesa-version "10.0.570"}))))
+
 #?(:clj
    (def ^:no-doc mode
      "One of `:promesa` or `:native`. CLJ runtime only. Useful for tests
